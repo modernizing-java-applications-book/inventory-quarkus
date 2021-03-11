@@ -12,10 +12,10 @@ public class InventoryResourceTest {
     @Test
     public void testHelloEndpoint() {
         given()
-          .when().get("/hello")
+          .when().get("/api/inventory/329299")
           .then()
              .statusCode(200)
-             .body(is("hello"));
+             .body(is("{\"itemId\":\"329299\",\"quantity\":35}"));
     }
 
 }
