@@ -1,0 +1,11 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: inventory-svc
+spec:
+  template:
+    spec:
+      containers:
+        - image: docker.io/modernizingjavaappsbook/inventory-quarkus:latest
+          ports:
+           - containerPort: 8080

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inventory-quarkus
+  labels:
+    app: inventory-quarkus
+spec:
+  containers:
+    - name: inventory-quarkus
+      image: docker.io/modernizingjavaappsbook/inventory-quarkus:latest
+      ports:
+        - containerPort: 8080

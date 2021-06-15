@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-quarkus-deploy
+  labels:
+    app: inventory-quarkus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-quarkus
+  template:
+    metadata:
+      labels:
+        app: inventory-quarkus
+    spec:
+      containers:
+      - name: inventory-quarkus
+        image: docker.io/modernizingjavaappsbook/inventory-quarkus:latest
+        ports:
+        - containerPort: 8080
