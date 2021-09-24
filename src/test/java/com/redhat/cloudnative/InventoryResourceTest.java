@@ -15,7 +15,7 @@ public class InventoryResourceTest {
           .when().get("/api/inventory/329299")
           .then()
              .statusCode(200)
-             .body(is("{\"itemId\":\"329299\",\"quantity\":35}"));
+             .body(is("{\"id\":\"329299\",\"quantity\":35}"));
     }
 
 }
