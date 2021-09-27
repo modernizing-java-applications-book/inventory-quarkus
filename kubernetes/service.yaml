@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: inventory-quarkus-service
+  name: inventory-quarkus
 spec:
   selector:
     app: inventory-quarkus
@@ -9,3 +9,4 @@ spec:
     - protocol: TCP
       port: 8080
       targetPort: 8080
+      name: http
