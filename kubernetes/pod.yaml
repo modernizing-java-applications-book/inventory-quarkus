@@ -7,6 +7,6 @@ metadata:
 spec:
   containers:
     - name: inventory-quarkus
-      image: docker.io/modernizingjavaappsbook/inventory-quarkus:latest
+      image: quay.io/modernizingjavaappsbook/inventory-quarkus:latest
       ports:
         - containerPort: 8080
