@@ -1,0 +1,51 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-quarkus-deploy
+  labels:
+    app: inventory-quarkus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-quarkus
+  template:
+    metadata:
+      labels:
+        app: inventory-quarkus
+    spec:
+      containers:
+      - name: inventory-quarkus
+        image: quay.io/modernizingjavaappsbook/inventory-quarkus:latest
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-quarkus
+spec:
+  selector:
+    app: inventory-quarkus
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+      name: http
