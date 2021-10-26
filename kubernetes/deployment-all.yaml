@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: inventory-quarkus-deploy
+  name: inventory-quarkus
   labels:
     app: inventory-quarkus
 spec:
