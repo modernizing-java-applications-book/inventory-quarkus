@@ -5,6 +5,8 @@ metadata:
   name: inventory-quarkus
   labels:
     app: inventory-quarkus
+    app.kubernetes.io/name: java
+    app.kubernetes.io/part-of: coolstore
 spec:
   replicas: 1
   selector:
