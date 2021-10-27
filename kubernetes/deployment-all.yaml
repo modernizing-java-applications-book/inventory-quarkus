@@ -51,3 +51,22 @@ spec:
       port: 8080
       targetPort: 8080
       name: http
+---
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: inventory-quarkus
+  labels:
+    app: inventory-quarkus
+    app.kubernetes.io/component: inventory-quarkus
+    app.kubernetes.io/instance: inventory-quarkus
+    app.kubernetes.io/part-of: coolstore
+spec:
+  to:
+    kind: Service
+    name: inventory-quarkus
+    weight: 100
+  port:
+    targetPort: http
+  wildcardPolicy: None
