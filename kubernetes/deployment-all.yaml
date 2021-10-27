@@ -52,7 +52,6 @@ spec:
       targetPort: 8080
       name: http
 ---
----
 kind: Route
 apiVersion: route.openshift.io/v1
 metadata:
