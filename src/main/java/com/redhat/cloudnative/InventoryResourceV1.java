@@ -4,8 +4,6 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.DefaultValue;
@@ -26,6 +24,14 @@ import io.quarkus.cache.CacheInvalidateAll;
 import io.quarkus.cache.CacheName;
 import io.quarkus.cache.CacheResult;
 
+import org.eclipse.microprofile.faulttolerance.CircuitBreaker;
+import org.eclipse.microprofile.faulttolerance.Timeout;
+import org.eclipse.microprofile.faulttolerance.Retry;
+
+import io.micrometer.core.annotation.Counted;
+import io.micrometer.core.annotation.Timed;
+import io.micrometer.core.instrument.MeterRegistry;
+
 import org.eclipse.microprofile.openapi.annotations.Operation;
 import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
 import org.eclipse.microprofile.openapi.annotations.parameters.RequestBody;
@@ -39,41 +45,62 @@ import org.jboss.logging.Logger;
 import java.net.URI;
 import java.util.List;
 
-@Path("/api/inventory")
+/**
+ * Inventory API v1 - Versioned endpoint with metrics and resilience patterns
+ * 
+ * API Versioning Strategy: URI Path versioning (/api/v1/inventory)
+ */
+@Path("/api/v1/inventory")
 @ApplicationScoped
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-@Tag(name = "Inventory", description = "Inventory management operations")
-public class InventoryResource {
+@Tag(name = "Inventory v1", description = "Inventory management operations (v1)")
+public class InventoryResourceV1 {
 
-    private static final Logger LOG = Logger.getLogger(InventoryResource.class);
+    private static final Logger LOG = Logger.getLogger(InventoryResourceV1.class);
 
     @Inject
     @CacheName("inventory-cache")
     Cache inventoryCache;
 
+    @Inject
+    MeterRegistry meterRegistry;
+
+    // ==================== GET ENDPOINTS (with metrics & resilience)
+    // ====================
+
     @GET
-    @Operation(summary = "List all inventory items", description = "Returns a paginated list of inventory items with metadata")
+    @Timeout(5000)
+    @CircuitBreaker(requestVolumeThreshold = 10, failureRatio = 0.5, delay = 5000, successThreshold = 3)
+    @Counted(value = "inventory.list.count", description = "How many times inventory list has been requested")
+    @Timed(value = "inventory.list.timer", description = "Time taken to list inventory items", percentiles = { 0.5,
+            0.95, 0.99 })
+    @Operation(summary = "List all inventory items (v1)", description = "Returns a paginated list of inventory items with metadata")
     @APIResponses(value = {
-            @APIResponse(responseCode = "200", description = "Paginated list of inventory items", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = PaginatedResponse.class)))
+            @APIResponse(responseCode = "200", description = "Paginated list of inventory items", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = PaginatedResponse.class))),
+            @APIResponse(responseCode = "503", description = "Service unavailable - Circuit breaker open")
     })
     public PaginatedResponse<Inventory> listAll(
             @Parameter(description = "Page number (0-based)") @QueryParam("page") @DefaultValue("0") int page,
             @Parameter(description = "Page size (max 100)") @QueryParam("size") @DefaultValue("20") int size) {
         LOG.debugf("Listing inventory items - page: %d, size: %d", page, size);
-        // Limit page size to prevent performance issues
         int effectiveSize = Math.min(size, 100);
         List<Inventory> items = Inventory.findAll()
                 .page(page, effectiveSize)
                 .list();
         long total = Inventory.count();
+        // Record gauge metric
+        meterRegistry.gauge("inventory.total.items", total);
         LOG.debugf("Found %d items out of %d total", items.size(), total);
         return PaginatedResponse.of(items, total, page, effectiveSize);
     }
 
     @GET
     @Path("/all")
-    @Operation(summary = "List all inventory items without pagination", description = "Returns a simple list of all inventory items (use with caution for large datasets)")
+    @Timeout(3000)
+    @Counted(value = "inventory.list.all.count", description = "How many times all inventory has been requested")
+    @Timed(value = "inventory.list.all.timer", description = "Time taken to list all inventory items")
+    @Operation(summary = "List all inventory items without pagination (v1)", description = "Returns a simple list of all inventory items")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "List of all inventory items", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = Inventory.class)))
     })
@@ -85,7 +112,8 @@ public class InventoryResource {
     @GET
     @Path("/count")
     @Produces(MediaType.TEXT_PLAIN)
-    @Operation(summary = "Count inventory items", description = "Returns the total number of inventory items")
+    @Counted(value = "inventory.count.requests", description = "How many times count has been requested")
+    @Operation(summary = "Count inventory items (v1)", description = "Returns the total number of inventory items")
     @APIResponse(responseCode = "200", description = "Total count of inventory items")
     public Long count() {
         Long count = Inventory.count();
@@ -95,12 +123,16 @@ public class InventoryResource {
 
     @GET
     @Path("/{itemId}")
-    @Operation(summary = "Get inventory by ID", description = "Returns a single inventory item by its ID (cached)")
+    @Timeout(2000)
+    @Retry(maxRetries = 3, delay = 100)
+    @CacheResult(cacheName = "inventory-cache")
+    @Counted(value = "inventory.get.by.id.count", description = "How many times get by ID has been requested")
+    @Timed(value = "inventory.get.by.id.timer", description = "Time taken to get inventory by ID")
+    @Operation(summary = "Get inventory by ID (v1)", description = "Returns a single inventory item by its ID (cached)")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Inventory item found", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = Inventory.class))),
             @APIResponse(responseCode = "404", description = "Inventory item not found", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @CacheResult(cacheName = "inventory-cache")
     public Inventory getAvailability(
             @Parameter(description = "Inventory item ID", required = true) @PathParam("itemId") Long itemId) {
         LOG.debugf("Getting inventory by ID: %d", itemId);
@@ -114,12 +146,16 @@ public class InventoryResource {
 
     @GET
     @Path("/product/{productId}")
-    @Operation(summary = "Get inventory by product ID", description = "Returns the inventory item for a specific product (cached)")
+    @Timeout(2000)
+    @Retry(maxRetries = 3, delay = 100)
+    @CacheResult(cacheName = "inventory-product-cache")
+    @Counted(value = "inventory.get.by.product.count", description = "How many times get by product ID has been requested")
+    @Timed(value = "inventory.get.by.product.timer", description = "Time taken to get inventory by product ID")
+    @Operation(summary = "Get inventory by product ID (v1)", description = "Returns the inventory item for a specific product")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Inventory item found", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = Inventory.class))),
             @APIResponse(responseCode = "404", description = "Inventory item not found for the product", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @CacheResult(cacheName = "inventory-product-cache")
     public Inventory getByProductId(
             @Parameter(description = "Product ID", required = true) @PathParam("productId") Long productId) {
         LOG.debugf("Getting inventory by product ID: %d", productId);
@@ -131,14 +167,16 @@ public class InventoryResource {
         return inventory;
     }
 
+    // ==================== POST ENDPOINT ====================
+
     @POST
     @Transactional
-    @Operation(summary = "Create inventory item", description = "Creates a new inventory item")
+    @Counted(value = "inventory.create.count", description = "How many inventory items have been created")
+    @Timed(value = "inventory.create.timer", description = "Time taken to create inventory item")
+    @Operation(summary = "Create inventory item (v1)", description = "Creates a new inventory item")
     @APIResponses(value = {
             @APIResponse(responseCode = "201", description = "Inventory item created", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = Inventory.class))),
-            @APIResponse(responseCode = "400", description = "Invalid inventory data", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class))),
-            @APIResponse(responseCode = "401", description = "Unauthorized"),
-            @APIResponse(responseCode = "403", description = "Forbidden - Insufficient permissions")
+            @APIResponse(responseCode = "400", description = "Invalid inventory data", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class)))
     })
     @CacheInvalidateAll(cacheName = "inventory-cache")
     @CacheInvalidateAll(cacheName = "inventory-product-cache")
@@ -146,24 +184,25 @@ public class InventoryResource {
             @RequestBody(description = "Inventory item to create", required = true, content = @Content(schema = @Schema(implementation = Inventory.class))) @Valid Inventory inventory) {
         LOG.infof("Creating inventory item for product ID: %d with quantity: %d", inventory.productId,
                 inventory.quantity);
-        // Clear any provided ID to let the database auto-generate it
         inventory.id = null;
         inventory.persist();
         LOG.infof("Created inventory item with ID: %d", inventory.id);
-        return Response.created(URI.create("/api/inventory/" + inventory.id))
+        return Response.created(URI.create("/api/v1/inventory/" + inventory.id))
                 .entity(inventory)
                 .build();
     }
 
+    // ==================== PUT ENDPOINT ====================
+
     @PUT
     @Path("/{itemId}")
     @Transactional
-    @Operation(summary = "Update inventory item", description = "Updates an existing inventory item completely")
+    @Counted(value = "inventory.update.count", description = "How many inventory items have been updated")
+    @Timed(value = "inventory.update.timer", description = "Time taken to update inventory item")
+    @Operation(summary = "Update inventory item (v1)", description = "Updates an existing inventory item completely")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Inventory item updated", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = Inventory.class))),
             @APIResponse(responseCode = "400", description = "Invalid inventory data", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class))),
-            @APIResponse(responseCode = "401", description = "Unauthorized"),
-            @APIResponse(responseCode = "403", description = "Forbidden - Insufficient permissions"),
             @APIResponse(responseCode = "404", description = "Inventory item not found", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class)))
     })
     @CacheInvalidate(cacheName = "inventory-cache")
@@ -183,15 +222,17 @@ public class InventoryResource {
         return inventory;
     }
 
+    // ==================== PATCH ENDPOINT ====================
+
     @PATCH
     @Path("/{itemId}/quantity")
     @Transactional
-    @Operation(summary = "Update inventory quantity", description = "Updates only the quantity of an inventory item")
+    @Counted(value = "inventory.quantity.update.count", description = "How many quantity updates have been performed")
+    @Timed(value = "inventory.quantity.update.timer", description = "Time taken to update quantity")
+    @Operation(summary = "Update inventory quantity (v1)", description = "Updates only the quantity of an inventory item")
     @APIResponses(value = {
             @APIResponse(responseCode = "200", description = "Quantity updated", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = Inventory.class))),
             @APIResponse(responseCode = "400", description = "Invalid quantity value", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class))),
-            @APIResponse(responseCode = "401", description = "Unauthorized"),
-            @APIResponse(responseCode = "403", description = "Forbidden - Insufficient permissions"),
             @APIResponse(responseCode = "404", description = "Inventory item not found", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class)))
     })
     @CacheInvalidate(cacheName = "inventory-cache")
@@ -211,14 +252,15 @@ public class InventoryResource {
         return inventory;
     }
 
+    // ==================== DELETE ENDPOINTS ====================
+
     @DELETE
     @Path("/{itemId}")
     @Transactional
-    @Operation(summary = "Delete inventory item", description = "Deletes an inventory item by its ID")
+    @Counted(value = "inventory.delete.count", description = "How many inventory items have been deleted")
+    @Operation(summary = "Delete inventory item (v1)", description = "Deletes an inventory item by its ID")
     @APIResponses(value = {
             @APIResponse(responseCode = "204", description = "Inventory item deleted"),
-            @APIResponse(responseCode = "401", description = "Unauthorized"),
-            @APIResponse(responseCode = "403", description = "Forbidden - Admin role required"),
             @APIResponse(responseCode = "404", description = "Inventory item not found", content = @Content(mediaType = MediaType.APPLICATION_JSON, schema = @Schema(implementation = ErrorResponse.class)))
     })
     @CacheInvalidate(cacheName = "inventory-cache")
@@ -237,16 +279,13 @@ public class InventoryResource {
     }
 
     /**
-     * Clear all caches - useful for administrative purposes
+     * Clear all caches
      */
     @DELETE
     @Path("/cache")
-    @Operation(summary = "Clear all inventory caches", description = "Clears all cached inventory data")
-    @APIResponses(value = {
-            @APIResponse(responseCode = "204", description = "Caches cleared"),
-            @APIResponse(responseCode = "401", description = "Unauthorized"),
-            @APIResponse(responseCode = "403", description = "Forbidden - Admin role required")
-    })
+    @Counted(value = "cache.clear.count", description = "How many times cache has been cleared")
+    @Operation(summary = "Clear all inventory caches (v1)", description = "Clears all cached inventory data")
+    @APIResponse(responseCode = "204", description = "Caches cleared")
     @CacheInvalidateAll(cacheName = "inventory-cache")
     @CacheInvalidateAll(cacheName = "inventory-product-cache")
     public Response clearCaches() {

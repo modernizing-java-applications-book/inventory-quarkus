@@ -7,67 +7,118 @@
     <version>1.0.0-SNAPSHOT</version>
 
     <properties>
-        <quarkus-plugin.version>2.1.4.Final</quarkus-plugin.version>
+        <quarkus-plugin.version>3.8.4</quarkus-plugin.version>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus</quarkus.platform.group-id>
-	    <quarkus.platform.version>2.1.4.Final</quarkus.platform.version>
-	    <quarkus.package.type>uber-jar</quarkus.package.type>
-        <compiler-plugin.version>3.8.1</compiler-plugin.version>
-        <surefire-plugin.version>3.0.0-M5</surefire-plugin.version>
+        <quarkus.platform.version>3.8.4</quarkus.platform.version>
+        <quarkus.package.type>uber-jar</quarkus.package.type>
+        <compiler-plugin.version>3.11.0</compiler-plugin.version>
+        <surefire-plugin.version>3.2.5</surefire-plugin.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
-	    <maven.compiler.parameters>true</maven.compiler.parameters>
-        <tekton-client.version>4.12.0</tekton-client.version>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.parameters>true</maven.compiler.parameters>
+        <tekton-client.version>6.12.0</tekton-client.version>
     </properties>
 
     <dependencyManagement>
-	<dependencies>
-	  <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-bom</artifactId>
-            <version>${quarkus.platform.version}</version>
-            <type>pom</type>
-            <scope>import</scope>
-          </dependency>
+        <dependencies>
+            <dependency>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-bom</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
     <dependencies>
         <dependency>
-          <groupId>io.quarkus</groupId>
-          <artifactId>quarkus-resteasy</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-resteasy-reactive</artifactId>
         </dependency>
         <dependency>
-          <groupId>io.quarkus</groupId>
-          <artifactId>quarkus-junit5</artifactId>
-          <scope>test</scope>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-resteasy-reactive-jackson</artifactId>
         </dependency>
         <dependency>
-          <groupId>io.rest-assured</groupId>
-          <artifactId>rest-assured</artifactId>
-          <scope>test</scope>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
-          <groupId>io.quarkus</groupId>
-          <artifactId>quarkus-resteasy-jsonb</artifactId>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-test-security</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
-          <groupId>io.quarkus</groupId>
-          <artifactId>quarkus-hibernate-orm-panache</artifactId>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
         </dependency>
         <dependency>
-          <groupId>io.quarkus</groupId>
-          <artifactId>quarkus-jdbc-h2</artifactId>
-  	</dependency>
-	<dependency>
-          <groupId>io.fabric8</groupId>
-          <artifactId>tekton-client</artifactId>
-          <version>${tekton-client.version}</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
         </dependency>
-	<dependency>
-	  <groupId>io.quarkus</groupId>
-	  <artifactId>quarkus-smallrye-health</artifactId>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-h2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>tekton-client</artifactId>
+            <version>${tekton-client.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-openapi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-cache</artifactId>
+        </dependency>
+        <!-- Security - JWT Authentication -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-jwt</artifactId>
+        </dependency>
+        <!-- Production Database - PostgreSQL -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <!-- Database Migrations -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <!-- Logging - JSON structured logging -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-logging-json</artifactId>
+        </dependency>
+        <!-- Metrics - Micrometer with Prometheus -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- Resilience - Fault Tolerance -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-fault-tolerance</artifactId>
         </dependency>
     </dependencies>
 
@@ -101,7 +152,6 @@
             </plugin>
         </plugins>
     </build>
-
 
     <profiles>
         <profile>

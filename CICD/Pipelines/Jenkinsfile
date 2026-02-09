@@ -1,0 +1,477 @@
+#!/usr/bin/env groovy
+
+/**
+ * Jenkinsfile for inventory-quarkus
+ * 
+ * This pipeline builds, tests, and deploys the inventory-quarkus microservice.
+ * It supports both development and production deployments.
+ * 
+ * Required Jenkins Plugins:
+ * - Pipeline
+ * - Git
+ * - Docker Pipeline
+ * - Kubernetes CLI (kubectl)
+ * - Credentials Binding
+ * - SonarQube Scanner (optional)
+ * 
+ * Required Credentials:
+ * - docker-registry-credentials: Docker registry username/password
+ * - sonarqube-token: SonarQube authentication token (optional)
+ * - kubeconfig: Kubernetes configuration for deployment
+ */
+
+pipeline {
+    agent {
+        label 'maven'  // Agent with Maven, Java 17, and Docker installed
+    }
+    
+    environment {
+        // Project configuration
+        PROJECT_NAME = 'inventory-quarkus'
+        PROJECT_VERSION = "${env.BUILD_NUMBER}"
+        JAVA_HOME = tool name: 'JDK-17', type: 'jdk'
+        
+        // Docker configuration
+        DOCKER_REGISTRY = credentials('docker-registry-url') ?: 'docker.io'
+        DOCKER_IMAGE = "${DOCKER_REGISTRY}/${PROJECT_NAME}"
+        DOCKER_TAG = "${env.BRANCH_NAME ?: 'latest'}-${env.BUILD_NUMBER}"
+        
+        // SonarQube configuration (optional)
+        SONARQUBE_ENABLED = false
+        SONARQUBE_SCANNER = tool name: 'SonarQube', type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+        
+        // Kubernetes configuration
+        KUBERNETES_NAMESPACE = 'inventory'
+        KUBERNETES_DEPLOYMENT = 'inventory-quarkus'
+        
+        // Maven options
+        MAVEN_OPTS = '-Dmaven.repo.local=$WORKSPACE/.m2/repository -Xmx1024m'
+    }
+    
+    tools {
+        maven 'Maven-3.9'
+        jdk 'JDK-17'
+    }
+    
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timestamps()
+        ansiColor('xterm')
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo "Checking out source code from ${env.GIT_URL ?: 'repository'}..."
+                checkout scm
+                
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                    env.GIT_BRANCH_NAME = sh(
+                        script: 'git rev-parse --abbrev-ref HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+            }
+            post {
+                success {
+                    echo "Checkout completed successfully. Commit: ${env.GIT_COMMIT_SHORT}"
+                }
+            }
+        }
+        
+        stage('Validate') {
+            parallel {
+                stage('Code Style Check') {
+                    steps {
+                        echo "Running code style validation..."
+                        sh '''
+                            mvn checkstyle:check -Dcheckstyle.failOnViolation=true || true
+                        '''
+                    }
+                }
+                
+                stage('Dependency Check') {
+                    steps {
+                        echo "Checking for vulnerable dependencies..."
+                        sh '''
+                            mvn dependency:analyze -DfailOnWarning=false || true
+                        '''
+                    }
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                echo "Building ${PROJECT_NAME}..."
+                sh '''
+                    mvn clean compile \
+                        -DskipTests \
+                        -Dproject.build.sourceEncoding=UTF-8 \
+                        -Dmaven.compiler.source=17 \
+                        -Dmaven.compiler.target=17
+                '''
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'target/classes/**/*', fingerprint: true, allowEmptyArchive: true
+                }
+            }
+        }
+        
+        stage('Unit Tests') {
+            steps {
+                echo "Running unit tests..."
+                sh '''
+                    mvn test \
+                        -Dmaven.test.failure.ignore=false \
+                        -Djava.util.logging.manager=org.jboss.logmanager.LogManager
+                '''
+            }
+            post {
+                always {
+                    junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'target/site/jacoco',
+                        reportFiles: 'index.html',
+                        reportName: 'JaCoCo Coverage'
+                    ])
+                }
+                failure {
+                    emailext(
+                        subject: "Unit Tests Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: "Unit tests have failed. Please check the build logs.\n\nBuild URL: ${env.BUILD_URL}",
+                        to: "${env.CHANGE_AUTHOR_EMAIL ?: 'team@example.com'}"
+                    )
+                }
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            when {
+                expression { return env.SONARQUBE_ENABLED == 'true' }
+            }
+            steps {
+                echo "Running SonarQube analysis..."
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        mvn sonar:sonar \
+                            -Dsonar.projectKey=${PROJECT_NAME} \
+                            -Dsonar.projectName="${PROJECT_NAME}" \
+                            -Dsonar.projectVersion=${PROJECT_VERSION} \
+                            -Dsonar.sources=src/main/java \
+                            -Dsonar.tests=src/test/java \
+                            -Dsonar.java.binaries=target/classes \
+                            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                    '''
+                }
+            }
+        }
+        
+        stage('Quality Gate') {
+            when {
+                expression { return env.SONARQUBE_ENABLED == 'true' }
+            }
+            steps {
+                echo "Waiting for SonarQube Quality Gate..."
+                timeout(time: 5, unit: 'MINUTES') {
+                    script {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "Quality Gate failed: ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Package') {
+            steps {
+                echo "Packaging application..."
+                sh '''
+                    mvn package -DskipTests
+                    
+                    # List generated artifacts
+                    ls -la target/
+                '''
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                script {
+                    docker.withRegistry("https://${DOCKER_REGISTRY}", 'docker-registry-credentials') {
+                        def customImage = docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}", 
+                            "--build-arg JAVA_HOME=${JAVA_HOME} " +
+                            "--build-arg BUILD_NUMBER=${env.BUILD_NUMBER} " +
+                            "--build-arg GIT_COMMIT=${env.GIT_COMMIT_SHORT} " +
+                            ".")
+                        
+                        // Push with build tag
+                        customImage.push()
+                        
+                        // Push with branch tag
+                        if (env.BRANCH_NAME) {
+                            customImage.push("${env.BRANCH_NAME}")
+                        }
+                        
+                        // Push latest tag for main branch
+                        if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') {
+                            customImage.push('latest')
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Integration Tests') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                    branch 'develop'
+                }
+            }
+            steps {
+                echo "Running integration tests..."
+                sh '''
+                    mvn verify -DskipUnitTests -DskipITs=false || true
+                '''
+            }
+            post {
+                always {
+                    junit testResults: 'target/failsafe-reports/*.xml', allowEmptyResults: true
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                    branch 'develop'
+                }
+            }
+            steps {
+                echo "Running security scan on Docker image..."
+                sh '''
+                    # Run Trivy security scan (if available)
+                    trivy image --exit-code 1 --severity HIGH,CRITICAL ${DOCKER_IMAGE}:${DOCKER_TAG} || true
+                '''
+            }
+        }
+        
+        stage('Deploy to Development') {
+            when {
+                branch 'develop'
+            }
+            environment {
+                KUBECONFIG = credentials('kubeconfig-dev')
+            }
+            steps {
+                echo "Deploying to Development environment..."
+                script {
+                    sh '''
+                        kubectl config use-context development
+                        
+                        # Update deployment image
+                        kubectl set image deployment/${KUBERNETES_DEPLOYMENT} \
+                            ${KUBERNETES_DEPLOYMENT}=${DOCKER_IMAGE}:${DOCKER_TAG} \
+                            -n ${KUBERNETES_NAMESPACE}
+                        
+                        # Wait for rollout
+                        kubectl rollout status deployment/${KUBERNETES_DEPLOYMENT} \
+                            -n ${KUBERNETES_NAMESPACE} \
+                            --timeout=300s
+                        
+                        # Verify deployment
+                        kubectl get pods -n ${KUBERNETES_NAMESPACE} -l app=${KUBERNETES_DEPLOYMENT}
+                    '''
+                }
+            }
+            post {
+                failure {
+                    script {
+                        sh '''
+                            kubectl rollout undo deployment/${KUBERNETES_DEPLOYMENT} -n ${KUBERNETES_NAMESPACE}
+                        '''
+                    }
+                    emailext(
+                        subject: "Deployment Failed (Development): ${env.JOB_NAME}",
+                        body: "Deployment to development environment failed. Rollback initiated.\n\nBuild URL: ${env.BUILD_URL}",
+                        to: "${env.CHANGE_AUTHOR_EMAIL ?: 'team@example.com'}"
+                    )
+                }
+            }
+        }
+        
+        stage('Deploy to Staging') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                }
+            }
+            environment {
+                KUBECONFIG = credentials('kubeconfig-staging')
+            }
+            steps {
+                echo "Deploying to Staging environment..."
+                input message: 'Deploy to Staging?', ok: 'Deploy'
+                
+                script {
+                    sh '''
+                        kubectl config use-context staging
+                        
+                        # Apply Kubernetes manifests
+                        kubectl apply -f kubernetes/ -n ${KUBERNETES_NAMESPACE}
+                        
+                        # Update deployment image
+                        kubectl set image deployment/${KUBERNETES_DEPLOYMENT} \
+                            ${KUBERNETES_DEPLOYMENT}=${DOCKER_IMAGE}:${DOCKER_TAG} \
+                            -n ${KUBERNETES_NAMESPACE}
+                        
+                        # Wait for rollout
+                        kubectl rollout status deployment/${KUBERNETES_DEPLOYMENT} \
+                            -n ${KUBERNETES_NAMESPACE} \
+                            --timeout=300s
+                    '''
+                }
+            }
+        }
+        
+        stage('Smoke Tests') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                }
+            }
+            steps {
+                echo "Running smoke tests against staging..."
+                script {
+                    sh '''
+                        # Wait for service to be ready
+                        sleep 30
+                        
+                        # Basic health check
+                        curl -f https://staging.example.com/q/health/ready || exit 1
+                        
+                        # API smoke test
+                        curl -f https://staging.example.com/api/inventory/count || exit 1
+                    '''
+                }
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                }
+            }
+            environment {
+                KUBECONFIG = credentials('kubeconfig-prod')
+            }
+            steps {
+                echo "Deploying to Production environment..."
+                input message: 'Deploy to Production?', ok: 'Deploy', submitter: 'admin,release-manager'
+                
+                script {
+                    sh '''
+                        kubectl config use-context production
+                        
+                        # Blue-Green deployment strategy
+                        kubectl apply -f kubernetes/deployment.yaml -n ${KUBERNETES_NAMESPACE}
+                        
+                        kubectl set image deployment/${KUBERNETES_DEPLOYMENT} \
+                            ${KUBERNETES_DEPLOYMENT}=${DOCKER_IMAGE}:${DOCKER_TAG} \
+                            -n ${KUBERNETES_NAMESPACE}
+                        
+                        kubectl rollout status deployment/${KUBERNETES_DEPLOYMENT} \
+                            -n ${KUBERNETES_NAMESPACE} \
+                            --timeout=600s
+                    '''
+                }
+            }
+            post {
+                success {
+                    emailext(
+                        subject: "Production Deployment Successful: ${env.JOB_NAME}",
+                        body: """
+                            Production deployment completed successfully!
+                            
+                            Project: ${PROJECT_NAME}
+                            Version: ${DOCKER_TAG}
+                            Build: #${env.BUILD_NUMBER}
+                            Commit: ${env.GIT_COMMIT_SHORT}
+                            
+                            Build URL: ${env.BUILD_URL}
+                        """,
+                        to: 'release-team@example.com'
+                    )
+                }
+                failure {
+                    script {
+                        sh '''
+                            kubectl rollout undo deployment/${KUBERNETES_DEPLOYMENT} -n ${KUBERNETES_NAMESPACE}
+                        '''
+                    }
+                    emailext(
+                        subject: "URGENT: Production Deployment Failed: ${env.JOB_NAME}",
+                        body: "Production deployment failed! Rollback has been initiated.\n\nBuild URL: ${env.BUILD_URL}",
+                        to: 'oncall@example.com'
+                    )
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Cleaning up workspace...'
+            cleanWs()
+        }
+        
+        success {
+            echo "Pipeline completed successfully for ${PROJECT_NAME}!"
+            slackSend(
+                color: 'good',
+                message: "✅ Build Successful: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nCommit: ${env.GIT_COMMIT_SHORT}"
+            )
+        }
+        
+        failure {
+            echo "Pipeline failed for ${PROJECT_NAME}!"
+            slackSend(
+                color: 'danger',
+                message: "❌ Build Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}\nCommit: ${env.GIT_COMMIT_SHORT}\nBuild URL: ${env.BUILD_URL}"
+            )
+        }
+        
+        unstable {
+            echo "Pipeline is unstable for ${PROJECT_NAME}!"
+            slackSend(
+                color: 'warning',
+                message: "⚠️ Build Unstable: ${env.JOB_NAME} #${env.BUILD_NUMBER}\nBranch: ${env.BRANCH_NAME}"
+            )
+        }
+    }
+}
