@@ -27,6 +27,9 @@ nb-configuration.xml
 *.orig
 *.rej
 
+# Environment
+.env
+
 # Maven
 target/
 pom.xml.tag
